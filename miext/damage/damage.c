@@ -1566,20 +1566,38 @@ damageSetWindowPixmap(WindowPtr pWindow, PixmapPtr pPixmap)
     }
 }
 
-static void
-damageWindowDestroy(CallbackListPtr *pcbl, ScreenPtr pScreen, WindowPtr pWindow)
+/*
+ * Window damage is torn down from a DestroyWindow wrapper, not from a
+ * dixScreenHookWindowDestroy() hook: hooks run before the whole
+ * pScreen->DestroyWindow chain, so they would free damage that a driver
+ * further out in the chain still owns and destroys itself. The proprietary
+ * NVIDIA DDX does exactly that for its root window damage (reverse PRIME),
+ * which turned into a use-after-free / double free at server shutdown.
+ * Running here keeps the Xorg 21.1 ordering drivers were written against.
+ */
+static Bool
+damageDestroyWindow(WindowPtr pWindow)
 {
+    ScreenPtr pScreen = pWindow->drawable.pScreen;
     DamagePtr pDamage;
+    Bool ret = TRUE;
+
+    damageScrPriv(pScreen);
 
     while ((pDamage = damageGetWinPriv(pWindow))) {
         DamageDestroy(pDamage);
     }
+
+    unwrap(pScrPriv, pScreen, DestroyWindow);
+    if (pScreen->DestroyWindow)
+        ret = (*pScreen->DestroyWindow) (pWindow);
+    wrap(pScrPriv, pScreen, DestroyWindow, damageDestroyWindow);
+    return ret;
 }
 
 static void damageCloseScreen(CallbackListPtr *pcbl, ScreenPtr pScreen, void *unused)
 {
     dixScreenUnhookPostClose(pScreen, damageCloseScreen);
-    dixScreenUnhookWindowDestroy(pScreen, damageWindowDestroy);
     dixScreenUnhookPixmapDestroy(pScreen, damagePixmapDestroy);
 
     damageScrPriv(pScreen);
@@ -1588,6 +1606,7 @@ static void damageCloseScreen(CallbackListPtr *pcbl, ScreenPtr pScreen, void *un
 
     unwrap(pScrPriv, pScreen, CreateGC);
     unwrap(pScrPriv, pScreen, CopyWindow);
+    unwrap(pScrPriv, pScreen, DestroyWindow);
 
     dixSetPrivate(&pScreen->devPrivates, damageScrPrivateKey, NULL);
     free(pScrPriv);
@@ -1677,12 +1696,12 @@ DamageSetup(ScreenPtr pScreen)
     pScrPriv->pScreenDamage = 0;
 
     dixScreenHookPostClose(pScreen, damageCloseScreen);
-    dixScreenHookWindowDestroy(pScreen, damageWindowDestroy);
     dixScreenHookPixmapDestroy(pScreen, damagePixmapDestroy);
 
     wrap(pScrPriv, pScreen, CreateGC, damageCreateGC);
     wrap(pScrPriv, pScreen, SetWindowPixmap, damageSetWindowPixmap);
     wrap(pScrPriv, pScreen, CopyWindow, damageCopyWindow);
+    wrap(pScrPriv, pScreen, DestroyWindow, damageDestroyWindow);
     if (ps) {
         wrap(pScrPriv, ps, Glyphs, damageGlyphs);
         wrap(pScrPriv, ps, Composite, damageComposite);

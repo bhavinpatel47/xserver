@@ -65,7 +65,7 @@ typedef struct _damageScrPriv {
     CreateGCProcPtr CreateGC;
     void *_dummy2; // required in place of a removed field for ABI compatibility
     SetWindowPixmapProcPtr SetWindowPixmap;
-    void *_dummy3; // required in place of a removed field for ABI compatibility
+    DestroyWindowProcPtr DestroyWindow; // same slot as in Xorg 21.1
     CompositeProcPtr Composite;
     GlyphsProcPtr Glyphs;
     AddTrapsProcPtr AddTraps;
